@@ -1,0 +1,17 @@
+[tool.pdm]
+
+[project]
+name = "chilitools-public"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Sean Crowe", email = "retrounlocked@gmail.com"},
+]
+dependencies = []
+requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "MIT"}
+
+[build-system]
+requires = ["pdm-pep517>=1.0"]
+build-backend = "pdm.pep517.api"
