@@ -5,6 +5,7 @@ from chilitools.api.connector import ChiliConnector
 from chilitools.utilities.file import writeFile, readFile, checkForFile
 from chilitools.utilities.backoffice import backofficeURLInput
 from chilitools.utilities.logger import getLogger
+from chilitools.utilities.document import ChiliDocument
 
 
 class ServerMigrator:
@@ -80,13 +81,17 @@ class ServerMigrator:
           itemID=item
         )
         if not resp.success:
-          self.logger.error(f"There was an issue getting item definition xml for the item id: {item}")
+          if resource.lower() == "fonts":
+            self.logger.warn(f"There was an issue getting item definition for {resource} with id: {item}")
+          else:
+            self.logger.error(f"There was an issue getting item definition for {resource} with id: {item}")
           if self.verbose:
             print(resp.asDict())
-        itemXML = resp.contentAsDict()['item']
-        itemXML['@path'] = itemXML['@relativePath']
-        self.progress['resources'][resource]['toTransfer'].append(itemXML)
-        #self._saveProgressFile()
+        else:
+          itemXML = resp.contentAsDict()['item']
+          itemXML['@path'] = itemXML['@relativePath']
+          self.progress['resources'][resource]['toTransfer'].append(itemXML)
+          #self._saveProgressFile()
       self.__transferItems(resource=resource, disablePreviews=False)
 
   def transferResource(self, resource: str, parentFolder: str = '', customPath: str = None):
@@ -125,7 +130,8 @@ class ServerMigrator:
         # Turn off Automatic Preview Generation for the API KEY
         resp = self.dest.system.SetAutomaticPreviewGeneration(createPreviews=False)
         if not resp.didSucceed():
-          self.logger.error(f"There was an issue disabling the automatic preview generation for the CHILI Destination Server API Key")
+          # self.logger.error(f"There was an issue disabling the automatic preview generation for the CHILI Destination Server API Key")
+          pass
         elif self.verbose:
           print(f"\n{resp.text}\n")
 
@@ -144,6 +150,10 @@ class ServerMigrator:
           continue
         elif self.verbose:
           print(f"\n{resp.text}\n")
+
+        if not "finished=\"True\"" in resp.text:
+          self.logger.warn(f"Skipping item because item ID already exists for {r['@name']}: {r['@id']}")
+          continue
 
         # Extract path from resource tree item (orginal path is full path ending with <document name>.xml)
         if len(r['@path']) != 0:
@@ -182,6 +192,98 @@ class ServerMigrator:
           )
           if not resp.didSucceed():
             self.logger.error(f"There was an issue uploading the asset to the destination server- Name: {r['@name']} -- Item ID: {r['@id']}\n{resp.text}")
+            continue
+
+        # IF ASSET = NEED TO USE MACHINE AS MIDDLEMAN
+        elif resource.lower() == 'fonts':
+          # Download Asset
+          self.logger.info(f"Downloading fonts file data temporarily for: {r['@name']}")
+          fileData = self.source.resources.DownloadAsset(
+            resourceType='fonts',
+            id=r['@id'],
+            itemPath=r['@path'],
+            assetType='original',
+            page=1
+          )
+          if not resp.didSucceed():
+            self.logger.error(f"There was an issue downloading the fonts - Name: {r['@name']} -- Item ID: {r['@id']}\n{resp.text}")
+            continue
+
+          # Base64 Encode the byte data
+          fileData = base64.b64encode(fileData.response.content)
+          fileData = fileData.decode('utf-8')
+
+          self.logger.info(f"Uploading fonts data to destination CHILI server: {r['@name']}")
+          resp = self.dest.resources.ResourceItemAdd(
+            resourceType='fonts',
+            newName=fileName,
+            fileData=fileData,
+            xml='',
+            folderPath=resourceItemPath
+          )
+          if not resp.didSucceed():
+            self.logger.error(f"There was an issue uploading the fonts to the destination server- Name: {r['@name']} -- Item ID: {r['@id']}\n{resp.text}")
+            continue
+
+        elif resource.lower() == "documents":
+          # Download document
+          self.logger.info(f"Downloading documents file data temporarily for: {r['@name']}")
+          fileData = self.source.resources.DownloadAsset(
+            resourceType='documents',
+            id=r['@id'],
+            itemPath=r['@path'],
+            assetType='original',
+            page=1
+          )
+          if not resp.didSucceed():
+            self.logger.error(f"There was an issue downloading the document - Name: {r['@name']} -- Item ID: {r['@id']}\n{resp.text}")
+            continue
+
+          docXml = fileData.response.text
+
+          if (docXml == "Item not found"):
+            self.logger.error(f"Document not found - Name: {r['@name']} -- Item ID: {r['@id']}\n{resp.text}")
+            continue
+
+          cd = ChiliDocument(docXml)
+
+          fonts = []
+          for font in cd.get_fonts():
+            fonts.append(font["id"])
+
+          print(fonts)
+          self.transferList(itemList=fonts, resource="Fonts")
+
+          images = []
+          for image in cd.get_images():
+            if image["resource_type"] == "Assets":
+              images.append(image["id"])
+
+          self.transferList(itemList=images, resource="Assets")
+
+          # Create a placeholder document because if you ResourceItemAdd a document, CHILI will process the XML and will remove spaces
+          self.logger.info(f"Creating placeholder document to destination CHILI server: {r['@name']}")
+          resp = self.dest.resources.ResourceItemAdd(
+            resourceType='documents',
+            newName=fileName,
+            fileData="<document />",
+            xml='',
+            folderPath=resourceItemPath
+          )
+          if not resp.didSucceed():
+            self.logger.error(f"There was an issue creating a placeholder document to the destination server- Name: {r['@name']} -- Item ID: {r['@id']}\n{resp.text}")
+            continue
+
+          writeFile(fileName="./response.txt", data=fileData.response.text, encoding="utf-8")
+
+          self.logger.info(f"Uploading document data to destination CHILI server: {r['@name']}")
+          resp = self.dest.resources.ResourceItemSave(
+            itemID=r['@id'],
+            resourceType="documents",
+            xml=docXml,
+          )
+          if not resp.didSucceed():
+            self.logger.error(f"There was an issue uploading the document to the destination server- Name: {r['@name']} -- Item ID: {r['@id']}\n{resp.text}")
             continue
 
         else:
@@ -244,19 +346,8 @@ class ServerMigrator:
           self.__iterresource(resource, d[v])
 
   def getDownloadURL(self, resource: str, itemID: str):
-    #http://cp-cqd-514/download.aspx?type=original&resourceName=Assets&id=2288c92c-7154-48f1-a8b3-599c0df6e368&apiKey=xyl678LaRqKrOK0VNtB9HvlnElxhdDsq6Wig8zGKjYoDGyPsKhf79UtPzIr8Q1agid2MgNLNJAxPXjY6bB8dzg==&pageNum=1
     downloadURL =  self.source.baseURL + self.source.enviroment + '/download.aspx?type=original&resourceName=' + resource + '&id=' + itemID + '&apiKey=' + self.source.getAPIKey() + '&pageNum=1'
     return downloadURL
 
   def _saveProgressFile(self):
     writeFile(fileName=self.progressFile, data=self.progress, isJSON=True)
-
-if __name__ == '__main__':
-  path = os.path.dirname(os.path.realpath(__file__))+'/'
-  # print('Please enter a name for the migration project')
-  # print('A progress folder can also be found using this name, if it does not exist, one will be created')
-  # migrationName = input().strip().lower()
-  # ServerMigrator(directory=path+'/'+migrationName)
-  m = ServerMigrator(directory=path+'coke', verbose=True, sourceChili='https://chili1-cdn.dmex.coke.com/CHILI/Admin/interface.aspx', destChili='https://ft-nostress.chili-publish-sandbox.online/ft-nostress/interface.aspx')
-
-  m.transferResource(resource='Workspaces', parentFolder='\\')
