@@ -9,7 +9,7 @@ from chilitools.utilities.document import ChiliDocument
 
 
 class ServerMigrator:
-  def __init__(self, directory: str, verbose: bool = False, update: bool = False, sourceChili: str = None, destChili: str = None):
+  def __init__(self, directory: str, verbose: bool = False, update: bool = False, srcChili: str = None, destChili: str = None):
     # Try to load the progress JSON file
     self.progressFile = directory+'/progress.json'
     if checkForFile(fileName=self.progressFile):
@@ -19,15 +19,15 @@ class ServerMigrator:
       self.dest = ChiliConnector(backofficeURL=self.progress['destURL'])
     else:
       # progress JSON not found
-      if sourceChili is None:
+      if srcChili is None:
         print("-------------SOURCE CHILI BACKOFFICE URL---------------")
-        sourceChili = backofficeURLInput()
+        srcChili = backofficeURLInput()
       if destChili is None:
         print("-------------DESTINATION CHILI BACKOFFICE URL---------------")
         destChili = backofficeURLInput()
-      self.source = ChiliConnector(backofficeURL=sourceChili)
+      self.source = ChiliConnector(backofficeURL=srcChili)
       self.dest = ChiliConnector(backofficeURL=destChili)
-      self.progress = {'sourceURL': sourceChili, 'destURL': destChili, 'resources':{}}
+      self.progress = {'sourceURL': srcChili, 'destURL': destChili, 'resources':{}}
       self._saveProgressFile()
 
     self.directory = directory
