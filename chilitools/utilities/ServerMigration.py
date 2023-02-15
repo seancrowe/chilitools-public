@@ -194,6 +194,14 @@ class ServerMigrator:
             self.logger.error(f"There was an issue uploading the asset to the destination server- Name: {r['@name']} -- Item ID: {r['@id']}\n{resp.text}")
             continue
 
+          itemSizeDest = self.dest.resources.ResourceItemGetDefinitionXML(resourceType="assets", itemID=r['@id'])
+          itemSizeSrc = self.source.resources.ResourceItemGetDefinitionXML(resourceType="assets", itemID=r['@id'])
+
+          # Check file size
+          if itemSizeSrc.data['item']['fileInfo']['@fileSize'] != itemSizeDest.data['item']['fileInfo']['@fileSize']:
+            self.logger.error(f"Asset wrong size from dest to src - Name: {r['@name']} -- Item ID: {r['@id']}\n")
+         
+
         # IF ASSET = NEED TO USE MACHINE AS MIDDLEMAN
         elif resource.lower() == 'fonts':
           # Download Asset
